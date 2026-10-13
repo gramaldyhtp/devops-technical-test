@@ -17,9 +17,9 @@ pipeline {
 
         stage('Test') {
             steps {
-                echo '=== STAGE 2: Running Unit Tests ==='
-                // Jika go test bernilai non-zero (gagal), pipeline akan otomatis STOP secara tegas.
-                sh 'go test -v ./...'
+                echo '=== STAGE 2: Running Unit Tests in Go Container ==='
+                // Menjalankan go test di dalam container golang:1.22-alpine
+                sh 'docker run --rm -v $PWD:/app -w /app golang:1.22-alpine go test -v ./...'
             }
         }
 
@@ -52,10 +52,10 @@ pipeline {
                     def commitHash = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
                     
                     sh """
-                        # 1. Compile binary terbaru di runner
-                        CGO_ENABLED=0 GOOS=linux go build -ldflags="-X main.version=${commitHash}" -o app-pipeline .
+                        # Compile binary terbaru menggunakan container golang
+                        docker run --rm -v \$PWD:/app -w /app -e CGO_ENABLED=0 -e GOOS=linux golang:1.22-alpine go build -ldflags="-X main.version=${commitHash}" -o app-pipeline .
                         
-                        # 2. Swap binary ke dalam container produksi & restart
+                        # Swap binary ke dalam container produksi & restart
                         docker cp app-pipeline ${CONTAINER_NAME}:/root/app
                         docker restart ${CONTAINER_NAME}
                     """
