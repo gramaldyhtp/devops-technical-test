@@ -17,16 +17,15 @@ pipeline {
 
         stage('Test') {
             steps {
-                echo '=== STAGE 2: Running Unit Tests in Go Container ==='
-                // Menjalankan go test di dalam container golang:1.22-alpine
-                sh 'docker run --rm -v $PWD:/app -w /app golang:1.22-alpine go test -v ./...'
+                echo '=== STAGE 2: Running Unit Tests via Docker Build Context ==='
+                sh 'docker build --target builder -t ${APP_NAME}-test .'
             }
         }
 
         stage('Build Image') {
             steps {
                 script {
-                    echo '=== STAGE 3: Building Docker Image with Commit Hash ==='
+                    echo '=== STAGE 3: Building Final Docker Image with Commit Hash ==='
                     def commitHash = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
                     sh "docker build --build-arg VERSION=${commitHash} -t ${APP_NAME}:${commitHash} ."
                 }
@@ -35,7 +34,6 @@ pipeline {
 
         stage('Push (Simulated)') {
             steps {
-                echo '=== STAGE 4: Simulating Registry Push via Jenkins Credentials ==='
                 withCredentials([usernamePassword(credentialsId: env.REGISTRY_CRED_ID, usernameVariable: 'REG_USER', passwordVariable: 'REG_PASS')]) {
                     sh '''
                         echo "Authenticating to registry using credentials: $REG_USER"
@@ -50,14 +48,19 @@ pipeline {
                 script {
                     echo '=== STAGE 5: Deploying via Binary Swap Strategy ==='
                     def commitHash = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
-                    
+
                     sh """
-                        # Compile binary terbaru menggunakan container golang
-                        docker run --rm -v \$PWD:/app -w /app -e CGO_ENABLED=0 -e GOOS=linux golang:1.22-alpine go build -ldflags="-X main.version=${commitHash}" -o app-pipeline .
-                        
-                        # Swap binary ke dalam container produksi & restart
+                        # 1. Ekstrak binary terkompilasi dari image terbaru via docker cp
+                        docker create --name temp-build ${APP_NAME}:${commitHash}
+                        docker cp temp-build:/root/app ./app-pipeline
+                        docker rm temp-build
+
+                        # 2. Swap binary ke dalam container produksi & restart
                         docker cp app-pipeline ${CONTAINER_NAME}:/root/app
                         docker restart ${CONTAINER_NAME}
+
+                        # Hapus binary sementara
+                        rm -f app-pipeline
                     """
                 }
             }
